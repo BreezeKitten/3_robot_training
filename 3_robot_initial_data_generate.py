@@ -50,6 +50,7 @@ TIME_OUT_FACTOR = 10
 
 
 agnet2_motion = 'Static'
+agnet3_motion = 'Static'
 RL_eposide_num = 1000
 RL_epsilon = 0.1
 gamma = 0.8
@@ -155,13 +156,17 @@ def Observe_state(agent):
     
     return Px_obs, Py_obs, Vx_obs, Vy_obs, r2_obs
 
-def Predict_action_value(agent1, agent2, V_pred, W_pred):
+def Predict_action_value(agent1, agent2, agent3, V_pred, W_pred):
     dummy = 0
     X_pred,  Y_pred, TH_pred = Motion_model(agent1.Px, agent1.Py, agent1.Pth, V_pred, W_pred)
     Px2, Py2, Vx2, Vy2, r2 = Observe_state(agent2)
     relative_gx, relative_gy, relative_gth = Coordinate_transformation(X_pred, Y_pred, TH_pred, agent1.gx, agent1.gy, agent1.gth)
     relative_Px2, relative_Py2, dummy = Coordinate_transformation(X_pred, Y_pred, TH_pred, Px2, Py2, dummy)
     relative_Vx2, relative_Vy2, dummy = Coordinate_transformation(0,0,TH_pred, Vx2, Vy2, dummy)
+    
+    Px3, Py3, Vx3, Vy3, r3 = Observe_state(agent3)
+    relative_Px3, relative_Py3, dummy = Coordinate_transformation(X_pred, Y_pred, TH_pred, Px3, Py3, dummy)
+    relative_Vx3, relative_Vy3, dummy = Coordinate_transformation(0,0,TH_pred, Vx3, Vy3, dummy)
     
     agent1_pred = copy.deepcopy(agent1)
     agent1_pred.Px = X_pred
@@ -171,21 +176,34 @@ def Predict_action_value(agent1, agent2, V_pred, W_pred):
     agent2_pred = copy.deepcopy(agent2)
     agent2_pred.Px = Px2
     agent2_pred.Py = Py2
+    
+    agent3_pred = copy.deepcopy(agent3)
+    agent3_pred.Px = Px3
+    agent3_pred.Py = Py3
 
     R = 0
-    if Check_collussion(agent1_pred,agent2_pred):
+    if Check_collussion(agent1_pred,agent2_pred) or Check_collussion(agent1_pred,agent3_pred):
         R = -5
     elif Check_Goal(agent1_pred, Calculate_distance(resX, resY, 0, 0), resTH):
         R = 1
     
-    state_pred = [[V_pred, W_pred, agent1.r, relative_gx, relative_gy, relative_gth, V_max, agent1.m11, agent1.m12, agent1.m13, relative_Px2, relative_Py2, relative_Vx2, relative_Vy2, r2]]
-    value_matrix = sess.run(predict_value, feed_dict={state: state_pred})
-    action_value = R + value_matrix[0][0]
+    state_pred12 = [[V_pred, W_pred, agent1.r, relative_gx, relative_gy, relative_gth, V_max, agent1.m11, agent1.m12, agent1.m13, relative_Px2, relative_Py2, relative_Vx2, relative_Vy2, r2]]
+    value_matrix12 = sess.run(predict_value, feed_dict={state: state_pred12})
+    action_value12 = R + value_matrix12[0][0]
+    
+    state_pred13 = [[V_pred, W_pred, agent1.r, relative_gx, relative_gy, relative_gth, V_max, agent1.m11, agent1.m12, agent1.m13, relative_Px3, relative_Py3, relative_Vx3, relative_Vy3, r3]]
+    value_matrix13 = sess.run(predict_value, feed_dict={state: state_pred13})
+    action_value13 = R + value_matrix13[0][0]
+    
+    if random.random() < 0.5:
+        action_value = action_value12 + action_value13
+    else:
+        action_value = action_value12 * action_value13
 
     return action_value    
 
     
-def Choose_action(agent1, agent2, epsilon):
+def Choose_action(agent1, agent2, agent3, epsilon):
     dice = random.random()
     action_value_max = -999999
     if dice < epsilon:
@@ -200,7 +218,7 @@ def Choose_action(agent1, agent2, epsilon):
             V_pred = np.clip(agent1.V + linear_acc * deltaT, -V_max, V_max)
             for angular_acc in angular_acc_set:
                 W_pred = np.clip(agent1.W + angular_acc * deltaT, -W_max, W_max)
-                action_value = Predict_action_value(agent1, agent2, V_pred, W_pred)
+                action_value = Predict_action_value(agent1, agent2, agent3, V_pred, W_pred)
                 if action_value > action_value_max:
                     action_value_max = action_value
                     action_pair = [V_pred, W_pred]                    
@@ -219,9 +237,11 @@ def Update_state(agent, V_next, W_next):
 
     return agent
 
-def Record_Path(agent1, agent2, time):
+def Record_Path(agent1, agent2, agent3, time):
     Vx2 = agent2.V * math.cos(agent2.Pth)
     Vy2 = agent2.V * math.sin(agent2.Pth)
+    Vx3 = agent3.V * math.cos(agent3.Pth)
+    Vy3 = agent3.V * math.sin(agent3.Pth)
     temp = {}
     temp['Px'] = agent1.Px
     temp['Py'] = agent1.Py
@@ -241,6 +261,11 @@ def Record_Path(agent1, agent2, time):
     temp['Vx2'] = Vx2
     temp['Vy2'] = Vy2
     temp['r2'] = agent2.r
+    temp['Px3'] = agent3.Px
+    temp['Py3'] = agent3.Py
+    temp['Vx3'] = Vx3
+    temp['Vy3'] = Vy3
+    temp['r3'] = agent3.r
     temp['time_tag'] = time
     return temp
                 
@@ -306,6 +331,8 @@ def Show_Path(Path, result, final_time, SAVE_PATH):
     Py_last = Path[0]['Py']
     Px2_last = Path[0]['Px2']
     Py2_last = Path[0]['Py2']
+    Px3_last = Path[0]['Px3']
+    Py3_last = Path[0]['Py3']    
     plt.plot(Path[0]['Px'], Path[0]['Py'], 'yo', Path[0]['gx'], Path[0]['gy'], 'mo')
     plt.arrow(Path[0]['gx'], Path[0]['gy'], L*math.cos(Path[0]['gth']), L*math.sin(Path[0]['gth']))
     for item in np.arange(0,final_time,deltaT):
@@ -313,19 +340,25 @@ def Show_Path(Path, result, final_time, SAVE_PATH):
         if((i%10)==0):
             circle1 = plt.Circle((Path[item]['Px'],Path[item]['Py']), Path[item]['r1'], color = 'b', fill = False)
             circle2 = plt.Circle((Path[item]['Px2'],Path[item]['Py2']), Path[item]['r2'], color = 'r', fill = False)
+            circle3 = plt.Circle((Path[item]['Px3'],Path[item]['Py3']), Path[item]['r3'], color = 'g', fill = False)
             ax.add_artist(circle1)
             ax.add_artist(circle2)
+            ax.add_artist(circle3)
             plt.arrow(Path[item]['Px'], Path[item]['Py'], L*math.cos(Path[item]['Pth']), L*math.sin(Path[item]['Pth']))
             plt.text(Path[item]['Px']-0.2, Path[item]['Py'], str(round(i*deltaT,1)), bbox=dict(color='blue', alpha=0.5))
             plt.text(Path[item]['Px2']-0.2, Path[item]['Py2'], str(round(i*deltaT,1)), bbox=dict(color='red', alpha=0.5))
+            plt.text(Path[item]['Px3']-0.2, Path[item]['Py3'], str(round(i*deltaT,1)), bbox=dict(color='green', alpha=0.5))
         if(i>0):
-            plt.plot([Px_last, Path[item]['Px']], [Py_last, Path[item]['Py']], 'g-')
+            plt.plot([Px_last, Path[item]['Px']], [Py_last, Path[item]['Py']], 'b-')
             plt.plot([Px2_last, Path[item]['Px2']], [Py2_last, Path[item]['Py2']], 'r-')
+            plt.plot([Px3_last, Path[item]['Px3']], [Py3_last, Path[item]['Py3']], 'g-')
         i = i+1
         Px_last = Path[item]['Px']
         Py_last = Path[item]['Py']
         Px2_last = Path[item]['Px2']
         Py2_last = Path[item]['Py2']
+        Px3_last = Path[item]['Px3']
+        Py3_last = Path[item]['Py3']
     
     NOW = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
     plt.savefig(SAVE_PATH +'/image/'+ NOW + result +'.png')
@@ -342,6 +375,8 @@ def Transform_data_to_relative_coordinate(read_file_name, save_file_name):
         relative_gx, relative_gy, relative_gth = Coordinate_transformation(data[item]['Px'],data[item]['Py'],data[item]['Pth'],data[item]['gx'],data[item]['gy'],data[item]['gth'])
         relative_Px2, relative_Py2, dummy = Coordinate_transformation(data[item]['Px'],data[item]['Py'],data[item]['Pth'],data[item]['Px2'],data[item]['Py2'], dummy)
         relative_Vx2, relative_Vy2, dummy = Coordinate_transformation(0,0,data[item]['Pth'],data[item]['Vx2'],data[item]['Vy2'], dummy)
+        relative_Px3, relative_Py3, dummy = Coordinate_transformation(data[item]['Px'],data[item]['Py'],data[item]['Pth'],data[item]['Px3'],data[item]['Py3'], dummy)
+        relative_Vx3, relative_Vy3, dummy = Coordinate_transformation(0,0,data[item]['Pth'],data[item]['Vx3'],data[item]['Vy3'], dummy)
         relative_data[item]['V'] = data[item]['V']
         relative_data[item]['W'] = data[item]['W']
         relative_data[item]['r1'] = data[item]['r1']
@@ -357,6 +392,11 @@ def Transform_data_to_relative_coordinate(read_file_name, save_file_name):
         relative_data[item]['Vx2'] = relative_Vx2
         relative_data[item]['Vy2'] = relative_Vy2
         relative_data[item]['r2'] = data[item]['r2']
+        relative_data[item]['Px3'] = relative_Px3
+        relative_data[item]['Py3'] = relative_Py3
+        relative_data[item]['Vx3'] = relative_Vx3
+        relative_data[item]['Vy3'] = relative_Vy3
+        relative_data[item]['r3'] = data[item]['r3']
         relative_data[item]['Value'] = data[item]['Value']
         
     Record_data(relative_data, save_file_name)    
@@ -387,56 +427,74 @@ def DL_process(DL_database):
         
 def RL_process(eposide_num, epsilon, RL_SAVE_PATH):      
     for eposide in range(eposide_num):
-        RL_LOG = open(RL_SAVE_PATH +'/RL_LOG.txt', 'a+')
+        RL_LOG = open(RL_SAVE_PATH +'/RL_LOG.txt','a+')
         ORING_OUTPUT = sys.stdout
         sys.stdout = RL_LOG  
     
         agent1 = Random_state()
         agent2 = Random_state()
+        agent3 = Random_state()
         
         agent1.Set_priority(0,0,1)
         agent2.Set_priority(0,0,1)
+        agent3.Set_priority(0,0,1)
         
         
         
         time = 0
         Path = {}
         result = 'Finish'
-        if Check_collussion(agent1, agent2):
+        if Check_collussion(agent1, agent2) or Check_collussion(agent1, agent3):
             continue
         if Check_Goal(agent1, Calculate_distance(resX, resY, 0, 0), resTH):
             continue
         TIME_OUT = Calculate_distance(agent1.Px, agent1.Py, agent1.gx, agent1.gy) * TIME_OUT_FACTOR
-        Path[round(time,1)] = Record_Path(agent1, agent2, time)
+        Path[round(time,1)] = Record_Path(agent1, agent2, agent3, time)
         
         agent1_init_state = [agent1.Px, agent1.Py, agent1.Pth, agent1.V, agent1.W, agent1.r]
         agent1_goal = [agent1.gx, agent1.gy, agent1.gth]
         agent2_init_state = [agent2.Px, agent2.Py, agent2.Pth, agent2.V, agent2.W, agent2.r]
-        agent2_goal = [agent2.gx, agent2.gy, agent2.gth]       
+        agent2_goal = [agent2.gx, agent2.gy, agent2.gth]
+        agent3_init_state = [agent3.Px, agent3.Py, agent3.Pth, agent3.V, agent3.W, agent3.r]
+        agent3_goal = [agent3.gx, agent3.gy, agent3.gth]
         
         while(not Check_Goal(agent1, Calculate_distance(resX, resY, 0, 0), resTH)):
             if time > TIME_OUT:
                 result = 'TIME_OUT'
                 break
-            elif Check_collussion(agent1, agent2):
+            elif Check_collussion(agent1, agent2) or Check_collussion(agent1, agent3):
                 result = 'Collussion'
                 break
             else:
-                V1_next, W1_next = Choose_action(agent1, agent2, epsilon)
+                V1_next, W1_next = Choose_action(agent1, agent2, agent3, epsilon)
                 agent1 = Update_state(agent1, V1_next, W1_next)
+                
                 if agnet2_motion == 'Static':
                     V2_next = 0
                     W2_next = 0
                 elif agnet2_motion == 'Greedy':
-                    V2_next, W2_next = Choose_action(agent2, agent1, 0)
+                    V2_next, W2_next = Choose_action(agent2, agent1, agent3, 0)
                 elif agnet2_motion == 'RL':
-                    V2_next, W2_next = Choose_action(agent2, agent1, epsilon)
+                    V2_next, W2_next = Choose_action(agent2, agent1, agent3, epsilon)
                 else:
                     V2_next = agent2.V + random.random() - 0.5
                     W2_next = agent2.W + random.random() - 0.5
                 agent2 = Update_state(agent2, V2_next, W2_next)
+                
+                if agnet3_motion == 'Static':
+                    V3_next = 0
+                    W3_next = 0
+                elif agnet3_motion == 'Greedy':
+                    V3_next, W3_next = Choose_action(agent3, agent1, agent2, 0)
+                elif agnet3_motion == 'RL':
+                    V3_next, W3_next = Choose_action(agent3, agent1, agent2, epsilon)
+                else:
+                    V3_next = agent3.V + random.random() - 0.5
+                    W3_next = agent3.W + random.random() - 0.5
+                agent3 = Update_state(agent3, V3_next, W3_next)
+                
             time = time + deltaT
-            Path[round(time,1)] = Record_Path(agent1, agent2, time)
+            Path[round(time,1)] = Record_Path(agent1, agent2, agent3, time)
             
         if result == 'Finish':
             Path = Calculate_value(Path, 1, time)
@@ -449,13 +507,12 @@ def RL_process(eposide_num, epsilon, RL_SAVE_PATH):
         Record_data(Path, RL_SAVE_PATH +'/RL_Path.json')
         
         
-        print('Result: ', result, ' :From ', agent1_init_state, ' to ', agent1_goal, ' with obs from ', agent2_init_state, ' to ', agent2_goal, ' Finish Time: ', time)        
+        print('Result: ', result, ' :From ', agent1_init_state, ' to ', agent1_goal, ' with obs1 from ', agent2_init_state, ' to ', agent2_goal, ' and obs2 from ', agent3_init_state, ' to ', agent3_goal,' Finish Time: ', time)        
         Show_Path(Path, result, time, RL_SAVE_PATH)
 
         sys.stdout = ORING_OUTPUT
         RL_LOG.close()
-        Path.clear()
-        gc.collect() 
+        Path.clear() 
     return
     
                     
@@ -465,7 +522,7 @@ def RL_process(eposide_num, epsilon, RL_SAVE_PATH):
 
 if __name__ == '__main__':
     
-    NOW = datetime.datetime.now().strftime('%Y%m%d-%H%M%S')
+    NOW = datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '_initial_data'
     FM = file_manger.file_manger('logs',NOW)
     SAVE_DIR = FM.log_path
     FM.create_dir()
@@ -500,9 +557,9 @@ if __name__ == '__main__':
     
     RL_SAVE_PATH = SAVE_DIR+'/training_record'
     TEST_SAVE_PATH = SAVE_DIR+'/test_result'
-    DL_database = 'relative_network/relative_record.json'
+    DL_database = 'record/initial_data.json'
     
-    saver.restore(sess,'relative_network/test.ckpt')
+    saver.restore(sess,'2_robot_network/test.ckpt')
     
     '''
     for i in range(1):
@@ -524,6 +581,7 @@ if __name__ == '__main__':
     RL_process(50, 0, TEST_SAVE_PATH)
     print('Finish')
     '''
-    RL_process(300,0, TEST_SAVE_PATH)
+    RL_process(10,0, TEST_SAVE_PATH)
+    Transform_data_to_relative_coordinate(TEST_SAVE_PATH +'/RL_Path.json', DL_database)
 
    
