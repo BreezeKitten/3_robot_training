@@ -28,7 +28,7 @@ layer1_output_number = 150
 layer2_output_number = 100
 layer3_output_number = 100
 layer4_output_number = 50 
-training_eposide_num = 5000
+training_eposide_num = 100000
 training_num = 3000
 test_num = 1
 
@@ -157,7 +157,7 @@ def Observe_state(agent):
     r2_obs = agent.r + (random.random()-0.5)*0.05
     
     return Px_obs, Py_obs, Vx_obs, Vy_obs, r2_obs
-
+'''
 def Predict_action_value(agent1, agent2, agent3, V_pred, W_pred):
     dummy = 0
     X_pred,  Y_pred, TH_pred = Motion_model(agent1.Px, agent1.Py, agent1.Pth, V_pred, W_pred)
@@ -236,7 +236,7 @@ def Choose_action(agent1, agent2, agent3, epsilon):
         W_pred = action_pair[1]
         
     return V_pred, W_pred
-
+'''
 def Update_state(agent, V_next, W_next):
     Px_next, Py_next, Pth_next = Motion_model(agent.Px, agent.Py, agent.Pth, V_next, W_next)    
     agent.Px = Px_next
@@ -313,7 +313,8 @@ def Sample_data(data_base, sample_number):
 def Divide_state_value(data):
     Start_flag = 1
     for item in data:
-        temp_state = [[data[item]['V'],data[item]['W'],data[item]['r1'],data[item]['gx'],data[item]['gy'],data[item]['gth'],data[item]['Vmax'],data[item]['m11'],data[item]['m12'],data[item]['m13'],data[item]['Px2'],data[item]['Py2'],data[item]['Vx2'],data[item]['Vy2'],data[item]['r2']]]
+        #temp_state = [[data[item]['V'],data[item]['W'],data[item]['r1'],data[item]['gx'],data[item]['gy'],data[item]['gth'],data[item]['Vmax'],data[item]['m11'],data[item]['m12'],data[item]['m13'],data[item]['Px2'],data[item]['Py2'],data[item]['Vx2'],data[item]['Vy2'],data[item]['r2']]]
+        temp_state = [[data[item]['V12'], data[item]['V13'], data[item]['D12'], data[item]['D13'], data[item]['gx'], data[item]['gy'], data[item]['gth'], data[item]['Px2'], data[item]['Py2'], data[item]['Px3'], data[item]['Py3']]]
         temp_value = [[data[item]['Value']]]
         if Start_flag:
             state = temp_state
@@ -412,29 +413,65 @@ def Transform_data_to_relative_coordinate(read_file_name, save_file_name):
     Record_data(relative_data, save_file_name)    
     return
     
+def three_robot_path_to_midstate(Path_file, DL_file):
+    data = Read_data(Path_file)
+    midstate = {}
+    dummy = 0
+    for item in data:
+        midstate[item] = {}
+        relative_gx, relative_gy, relative_gth = Coordinate_transformation(data[item]['Px'],data[item]['Py'],data[item]['Pth'],data[item]['gx'],data[item]['gy'],data[item]['gth'])
+        relative_Px2, relative_Py2, dummy = Coordinate_transformation(data[item]['Px'],data[item]['Py'],data[item]['Pth'],data[item]['Px2'],data[item]['Py2'], dummy)
+        relative_Vx2, relative_Vy2, dummy = Coordinate_transformation(0,0,data[item]['Pth'],data[item]['Vx2'],data[item]['Vy2'], dummy)
+        relative_Px3, relative_Py3, dummy = Coordinate_transformation(data[item]['Px'],data[item]['Py'],data[item]['Pth'],data[item]['Px3'],data[item]['Py3'], dummy)
+        relative_Vx3, relative_Vy3, dummy = Coordinate_transformation(0,0,data[item]['Pth'],data[item]['Vx3'],data[item]['Vy3'], dummy)
         
+        state_12 = [[data[item]['V'], data[item]['W'], data[item]['r1'], relative_gx, relative_gy, relative_gth, data[item]['Vmax'], data[item]['m11'], data[item]['m12'], data[item]['m13'], relative_Px2, relative_Py2, relative_Vx2, relative_Vy2, data[item]['r2']]]
+        value_matrix12 = sess_2_robot.run(mid_value, feed_dict={state: state_12})
+        value_12 = value_matrix12[0][0]
+        
+        state_13 = [[data[item]['V'], data[item]['W'], data[item]['r1'], relative_gx, relative_gy, relative_gth, data[item]['Vmax'], data[item]['m11'], data[item]['m12'], data[item]['m13'], relative_Px3, relative_Py3, relative_Vx3, relative_Vy3, data[item]['r3']]]
+        value_matrix13 = sess_2_robot.run(mid_value, feed_dict={state: state_13})
+        value_13 = value_matrix13[0][0]
+        
+        distance_12 = Calculate_distance(data[item]['Px'], data[item]['Py'], data[item]['Px2'], data[item]['Py2'])
+        distance_13 = Calculate_distance(data[item]['Px'], data[item]['Py'], data[item]['Px3'], data[item]['Py3'])
+        
+        midstate[item]['V12'] = float(value_12)
+        midstate[item]['V13'] = float(value_13)
+        midstate[item]['D12'] = distance_12 
+        midstate[item]['D13'] = distance_13
+        midstate[item]['gx'] = relative_gx
+        midstate[item]['gy'] = relative_gy
+        midstate[item]['gth'] = relative_gth 
+        midstate[item]['Px2'] = relative_Px2
+        midstate[item]['Py2'] = relative_Py2
+        midstate[item]['Px3'] = relative_Px3
+        midstate[item]['Py3'] = relative_Py3
+        midstate[item]['Value'] = data[item]['Value']
+        
+    Record_data(midstate, DL_file)
+    return
+       
         
         
 def DL_process(DL_database):
     data = Read_data(DL_database)
-    #test_data = Sample_data(data, test_num)
-    #test_state, test_value = Divide_state_value(test_data)
-    #test_predict = []
     
     for training_eposide in range(training_eposide_num):
         training_data = Sample_data(data, training_num)
         training_state, training_value = Divide_state_value(training_data)
-        sess.run(train_step, feed_dict={state: training_state, value: training_value})
+        sess_3_robot.run(train_step, feed_dict={mid_state: training_state, value: training_value})
         
-        #test_predict.append(sess.run(predict_value, feed_dict={state: test_state}))
         if training_eposide%100 == 0:
-            rs = sess.run(loss_record, feed_dict = {state: training_state, value: training_value})
+            rs = sess_3_robot.run(loss_record, feed_dict = {mid_state: training_state, value: training_value})
             writer.add_summary(rs, training_eposide)
             print('record', training_eposide)
-        #print('eposide: ',training_eposide, 'test error: ', test_value-test_predict[-1][0][0])
-    saver.save(sess,'relative_network/test.ckpt')    
+        if training_eposide%5000 == 0:
+            saver.save(sess_3_robot,'2_to_3_robot_network_ver2/test.ckpt')
+
+    saver.save(sess_3_robot,'2_to_3_robot_network_ver2/test.ckpt')    
     return
-        
+'''        
 def RL_process(eposide_num, epsilon, RL_SAVE_PATH):      
     for eposide in range(eposide_num):
         
@@ -630,7 +667,7 @@ def Test_process(State_file, TEST_SAVE_PATH):
         agent_set = SL.load_state(3,state_data)
     state_data.close()
     return
-        
+'''        
                    
                 
     
@@ -638,44 +675,65 @@ def Test_process(State_file, TEST_SAVE_PATH):
 
 if __name__ == '__main__':
     
-    NOW = datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '_initial_data'
+    NOW = datetime.datetime.now().strftime('%Y%m%d-%H%M%S') + '_3_robot_ver2'
     FM = file_manger.file_manger('logs',NOW)
     SAVE_DIR = FM.log_path
     FM.create_dir()
-    
-    state = tf.placeholder(tf.float32, [None, number_of_state])
-    value = tf.placeholder(tf.float32, [None, 1])
-    
+    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.20) 
+    '''
+    # load two robots network
+    state = tf.placeholder(tf.float32, [None, number_of_state])      
     H1, W1, B1 = add_layer(state, number_of_state, layer1_output_number, 'W1', 'B1', activation_function=tf.nn.relu)
     H2, W2, B2 = add_layer(H1, layer1_output_number, layer2_output_number, 'W2', 'B2', activation_function=tf.nn.relu)
     H3, W3, B3 = add_layer(H2, layer2_output_number, layer3_output_number, 'W3', 'B3', activation_function=tf.nn.relu)
     H4, W4, B4 = add_layer(H3, layer3_output_number, layer4_output_number, 'W4', 'B4', activation_function=tf.nn.sigmoid)
-    predict_value, Wf, Bf = add_layer(H4, layer4_output_number, 1, 'Wf', 'Bf', activation_function=tf.nn.sigmoid)
+    mid_value, Wf, Bf = add_layer(H4, layer4_output_number, 1, 'Wf', 'Bf', activation_function=tf.nn.sigmoid)
+         
+    
+    
+    sess_2_robot = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
+    '''
+    
+    # build 2 to 3 robots network
+    number_of_mid_state = 11
+    m_layer1_output_number = 400
+    m_layer2_output_number = 300
+    m_layer3_output_number = 200
+    m_layer4_output_number = 100
+    value = tf.placeholder(tf.float32, [None, 1])
+    mid_state = tf.placeholder(tf.float32, [None, number_of_mid_state])    
+    
+    mH1, mW1, mB1 = add_layer(mid_state, number_of_mid_state, m_layer1_output_number, 'mW1', 'mB1', activation_function=tf.nn.relu)
+    mH2, mW2, mB2 = add_layer(mH1, m_layer1_output_number, m_layer2_output_number, 'mW2', 'mB2', activation_function=tf.nn.relu)
+    mH3, mW3, mB3 = add_layer(mH2, m_layer2_output_number, m_layer3_output_number, 'mW3', 'mB3', activation_function=tf.nn.relu)
+    mH4, mW4, mB4 = add_layer(mH3, m_layer3_output_number, m_layer4_output_number, 'mW4', 'mB4', activation_function=tf.nn.sigmoid)
+    predict_value, mWf, mBf = add_layer(mH4, m_layer4_output_number, 1, 'mWf', 'mBf', activation_function=tf.nn.sigmoid)
     
     cost = tf.losses.mean_squared_error(predict_value, value)
-    regularizers = tf.nn.l2_loss(W1) + tf.nn.l2_loss(W2) + tf.nn.l2_loss(W3) + tf.nn.l2_loss(W4)
-    loss = cost + 0.0001* regularizers
+    #regularizers = tf.nn.l2_loss(mW1) + tf.nn.l2_loss(mW2) + tf.nn.l2_loss(mW3) + tf.nn.l2_loss(mW4)
+    loss = cost # + 0.0001* regularizers  
     
     loss_record = tf.summary.scalar('loss',loss)
     
     train_step = tf.train.AdamOptimizer(1e-3).minimize(loss)
     
-    saver = tf.train.Saver()
-    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.20) 
-    sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
-    
-    #merged = tf.summary.merge_all()
-    writer = tf.summary.FileWriter(SAVE_DIR+'/training_record/DL_logs/', sess.graph)
-    
+    sess_3_robot = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
+
+    writer = tf.summary.FileWriter(SAVE_DIR+'/training_record/DL_logs/', sess_3_robot.graph)        
     
     init = tf.global_variables_initializer()
-    sess.run(init)       
+    sess_3_robot.run(init) 
+    saver = tf.train.Saver([mW1]+[mW2]+[mW3]+[mW4]+[mWf]+
+                                     [mB1]+[mB2]+[mB3]+[mB4]+[mBf])
+    #saver.restore(sess_2_robot,'2_robot_network/test.ckpt')
+    #saver.restore(sess_3_robot,'2_to_3_robot_network_ver2/test.ckpt')
+    
     
     RL_SAVE_PATH = SAVE_DIR+'/training_record'
     TEST_SAVE_PATH = SAVE_DIR+'/test_result'
-    DL_database = 'record/initial_data.json'
+    DL_database = 'record/DL_init_ver2.json'
     
-    saver.restore(sess,'2_robot_network/test.ckpt')
+    
     
     '''
     for i in range(1):
@@ -697,7 +755,11 @@ if __name__ == '__main__':
     RL_process(50, 0, TEST_SAVE_PATH)
     print('Finish')
     '''
-    RL_process(2000,0, TEST_SAVE_PATH)
-    Transform_data_to_relative_coordinate(TEST_SAVE_PATH +'/RL_Path.json', DL_database)
+    #RL_process(2000,0, TEST_SAVE_PATH)
+    #Transform_data_to_relative_coordinate(TEST_SAVE_PATH +'/RL_Path.json', DL_database)
+    #three_robot_path_to_midstate('record/RL_Path.json', 'record/DL_init_ver2.json')
+    #three_robot_path_to_midstate('record/TEST_Path_1.json', 'record/DL_init_ver2.json')
+    #three_robot_path_to_midstate('record/TEST_Path_2.json', 'record/DL_init_ver2.json')
+    DL_process(DL_database)
 
    
