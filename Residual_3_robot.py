@@ -537,6 +537,10 @@ def RL_process(eposide_num, epsilon, RL_SAVE_PATH):
             continue
         if Check_Goal(agent1, Calculate_distance(resX, resY, 0, 0), resTH):
             continue
+        if Calculate_distance(agent1.gx,agent1.gy,agent2.gx,agent2.gy) < agent1.r + agent2.r:
+            continue
+        if Calculate_distance(agent1.gx,agent1.gy,agent3.gx,agent3.gy) < agent1.r + agent3.r:
+            continue
         TIME_OUT = Calculate_distance(agent1.Px, agent1.Py, agent1.gx, agent1.gy) * TIME_OUT_FACTOR
         Path[round(time,1)] = Record_Path(agent1, agent2, agent3, time)
         
